@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">Inventory</div><h1>Products</h1></div>
+  <div class="quick-actions">
+    <a href="/products/reorder" class="btn-secondary" style="padding:9px 16px;border-radius:8px;font-weight:700">{{ icon('clipboard-list') }} Reorder List</a>
+    {% if staff.role in ['owner','manager'] %}
+    <a href="/products/bulk-variants" class="btn-secondary" style="padding:9px 16px;border-radius:8px;font-weight:700">{{ icon('puzzle') }} Bulk-Create Variants</a>
+    <button type="button" class="btn-primary" style="padding:9px 16px;border-radius:8px;font-weight:700"
+      onclick="document.getElementById('new-product-panel').classList.toggle('open')">+ New Product</button>
+    {% endif %}
+  </div>
+</div>
+
+<div class="stat-grid" style="grid-template-columns:repeat({{ 3 if stock_value is not none else 2 }},1fr)">
+  <div class="stat-card">
+    <span class="stat-icon">{{ icon('package') }}</span>
+    <div class="stat-label">Total Products</div>
+    <div class="stat-value">{{ total_products }}</div>
+  </div>
+  <div class="stat-card">
+    <span class="stat-icon">{{ icon('triangle-alert') }}</span>
+    <div class="stat-label">Low Stock</div>
+    <div class="stat-value {{ 'text-red' if low_stock_count > 0 else '' }}">{{ low_stock_count }}</div>
+  </div>
+  {% if stock_value is not none %}
+  <div class="stat-card">
+    <span class="stat-icon">{{ icon('banknote') }}</span>
+    <div class="stat-label">Total Stock Value</div>
+    <div class="stat-value">${{ "%.2f"|format(stock_value) }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% if flash %}
+<div class="card" style="border-color:{{ 'var(--green)' if flash[0]=='green' else 'var(--warn)' if flash[0]=='amber' else 'var(--red)' }}">{{ flash[1] }}</div>
+{% endif %}
+
+{% if last_generated_group %}
+<div class="card" style="border-color:var(--accent);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+  <span style="font-size:13px">{{ icon('tag') }} Ready to put these on the shelf?</span>
+  <a href="/products/labels/print?group={{ last_generated_group|urlencode }}" class="btn-primary btn-sm">Print Barcode Labels for "{{ last_generated_group }}"</a>
+</div>
+{% endif %}
+
+{% if staff.role in ['owner','manager'] %}
+<div class="card collapsible-panel" id="new-product-panel">
+  <h2>Add Product</h2>
+  <form method="post" action="/products/add" class="form-row" style="align-items:flex-end;flex-wrap:wrap"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-group"><label>SKU</label><input name="sku" required></div>
+    <div class="form-group"><label>Name</label><input name="name" required placeholder="e.g. Clear Silicone Case — iPhone 15 — Black"></div>
+    <div class="form-group"><label>Category</label>
+      <select name="category" id="ap-category" onchange="updateBrandOptions('ap-category','ap-brand')">
+        {% for key, label in category_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="form-group"><label>Brand</label>
+      <select name="subcategory" id="ap-brand"></select>
+    </div>
+    <div class="form-group"><label>Variant Group <span class="text-muted" style="font-weight:400">(optional)</span></label>
+      <input name="variant_group" placeholder="e.g. Clear Silicone Case" list="variant-group-options">
+    </div>
+    <div class="form-group"><label>Price</label><input name="price" type="number" step="0.01" value="0"></div>
+    <div class="form-group"><label>Cost</label><input name="cost" type="number" step="0.01" value="0"></div>
+    <div class="form-group"><label>Stock</label><input name="stock" type="number" value="0"></div>
+    <div class="form-group"><label>Reorder At</label><input name="reorder_threshold" type="number" value="5" title="Flag for reordering when stock drops to this level"></div>
+    <div class="form-group"><label>Reorder Qty</label><input name="reorder_qty" type="number" value="10" title="Suggested quantity to reorder"></div>
+    <button class="btn-primary">Add</button>
+  </form>
+  <datalist id="variant-group-options">
+    {% for g in product_groups %}<option value="{{ g.name }}">{% endfor %}
+  </datalist>
+  <div class="hint" style="text-align:left;margin-top:8px">
+    Got 5-6 generic case types across many phone models and colors? Give each variant the <strong>same Variant Group</strong>
+    name (e.g. "Clear Silicone Case") — they'll browse together as one collapsible group below instead of cluttering the list,
+    while each still keeps its own accurate SKU and stock count.
+  </div>
+</div>
+
+<div class="card">
+  <h2>Bulk Import (CSV)</h2>
+  <p class="text-muted" style="font-size:12px">Columns: <code>SKU, Name, Category, Brand, Price, Cost, Stock, Variant Group</code> (last column optional) — same format as the Inventory CSV export, so you can export, edit in a spreadsheet, and re-import. Existing SKUs are skipped, not overwritten.</p>
+  <form method="post" action="/products/import" enctype="multipart/form-data" style="display:flex;gap:8px"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="file" name="file" accept=".csv" required>
+    <button class="btn-secondary">Import</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="card">
+  <form method="get" action="/products" id="filter-form">
+  {% if all_phone_brands %}
+  <div class="form-row" style="align-items:flex-end;margin-bottom:4px">
+    <div class="form-group"><label>1. Brand</label>
+      <select name="brand" onchange="document.getElementById('model-select').value=''; this.form.submit()">
+        <option value="">— Select brand —</option>
+        {% for b in all_phone_brands %}<option value="{{ b }}" {% if b == brand %}selected{% endif %}>{{ b }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="form-group"><label>2. Model</label>
+      <select name="model" id="model-select" onchange="this.form.submit()" {% if not brand %}disabled{% endif %}>
+        <option value="">{% if brand %}All {{ brand }} models{% else %}— Select brand first —{% endif %}</option>
+        {% if brand %}{% for m in phone_menu.get(brand, []) %}<option value="{{ m }}" {% if m == model %}selected{% endif %}>{{ m }}</option>{% endfor %}{% endif %}
+      </select>
+    </div>
+    {% if brand %}<a href="/products" class="btn-secondary btn-sm" style="margin-bottom:2px">Clear</a>{% endif %}
+  </div>
+  <div class="hint" style="text-align:left;margin-bottom:10px">Pick the phone, laptop, or console a customer has to see every case/sleeve/skin style and color we carry for it — or skip straight to searching below.</div>
+  {% endif %}
+
+  <div class="search-box" style="max-width:none;margin-bottom:12px">
+    <span class="search-icon">{{ icon('search', size=15) }}</span>
+    <input type="text" name="q" value="{{ q }}" placeholder="Search by SKU, name, model, or case type — press Enter" autocomplete="off">
+    {% if q %}<a href="/products" class="btn-secondary btn-sm" style="margin-left:8px">Clear</a>{% endif %}
+  </div>
+  </form>
+
+  {% if product_groups %}
+  <div id="grouped-products">
+    {% for g in product_groups %}
+    <details class="variant-group">
+      <summary>
+        <span class="variant-group-name">{{ g.name }}</span>
+        <span class="variant-group-meta">
+          {{ g.variants|length }} variant{{ 's' if g.variants|length != 1 }} · {{ g.total_stock }} total in stock
+          {% if g.low_stock %}<span class="badge badge-red" style="margin-left:6px">low stock</span>{% endif %}
+          <a href="/products/labels/print?group={{ g.name|urlencode }}" class="btn-secondary btn-sm" style="margin-left:8px" onclick="event.stopPropagation()">{{ icon('tag') }} Print Labels</a>
+        </span>
+      </summary>
+      <table>
+        <thead><tr><th>SKU</th><th>Name</th><th>Case Maker</th><th>Price</th><th>Stock</th><th></th></tr></thead>
+        <tbody>
+          {% for p in g.variants %}
+          <tr>
+            <td class="text-muted">{{ p.sku }}</td>
+            <td>{{ p.name }}</td>
+            <td class="text-muted">{{ p.subcategory or '—' }}</td>
+            <td>${{ "%.2f"|format(p.price) }}</td>
+            <td>{% if p.stock <= p.reorder_threshold %}<span class="badge badge-red">{{ p.stock }}</span>{% else %}{{ p.stock }}{% endif %}</td>
+            <td style="display:flex;gap:6px">
+              <a href="/products/labels/print?ids={{ p.id }}" class="btn-secondary btn-sm" title="Print barcode label">{{ icon('tag') }}</a>
+              {% if staff.role in ['owner','manager'] %}
+              <a href="/products/{{ p.id }}/edit" class="btn-secondary btn-sm">Edit</a>
+              <form method="post" action="/products/{{ p.id }}/delete" onsubmit="return confirm('Delete {{ p.name }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn-secondary btn-sm">Delete</button>
+              </form>
+              {% else %}<span class="text-muted" style="font-size:12px">—</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <table id="product-table" style="margin-top:{{ '14px' if product_groups else '0' }}">
+    {% if product_groups %}<caption style="text-align:left;caption-side:top;font-size:12px;color:var(--text3);padding-bottom:8px">Ungrouped products</caption>{% endif %}
+    <thead><tr><th>SKU</th><th>Name</th><th>Category</th><th>Brand</th><th>Price</th><th>Stock</th><th></th></tr></thead>
+    <tbody>
+      {% for p in ungrouped_products %}
+      <tr>
+        <td class="text-muted">{{ p.sku }}</td>
+        <td>{{ p.name }}</td>
+        <td>{{ category_labels.get(p.category, p.category) }}</td>
+        <td class="text-muted">{{ p.subcategory or '—' }}</td>
+        <td>${{ "%.2f"|format(p.price) }}</td>
+        <td>
+          {% if p.stock <= p.reorder_threshold %}<span class="badge badge-red">{{ p.stock }}</span>
+          {% else %}{{ p.stock }}{% endif %}
+        </td>
+        <td style="display:flex;gap:6px">
+          <a href="/products/labels/print?ids={{ p.id }}" class="btn-secondary btn-sm" title="Print barcode label">{{ icon('tag') }}</a>
+          {% if staff.role in ['owner','manager'] %}
+          <a href="/products/{{ p.id }}/edit" class="btn-secondary btn-sm">Edit</a>
+          <form method="post" action="/products/{{ p.id }}/delete" onsubmit="return confirm('Delete {{ p.name }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn-secondary btn-sm">Delete</button>
+          </form>
+          {% else %}
+          <span class="text-muted" style="font-size:12px">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      {% if not product_groups %}
+      <tr><td colspan="7"><div class="empty-state"><div class="icon">{{ icon('package', size=32) }}</div>
+        {% if q %}Nothing matches "{{ q }}".{% elif brand %}Nothing found for {{ brand }}{{ ' ' + model if model }}.{% else %}No products yet.{% endif %}
+      </div></td></tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if not q and not brand and total_pages > 1 %}
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+    <span class="text-muted" style="font-size:12px">Page {{ page }} of {{ total_pages }}</span>
+    <div style="display:flex;gap:8px">
+      <a href="/products?page={{ page - 1 }}" class="btn-secondary btn-sm"{% if page <= 1 %} style="pointer-events:none;opacity:.4" aria-disabled="true"{% endif %}>&larr; Previous</a>
+      <a href="/products?page={{ page + 1 }}" class="btn-secondary btn-sm"{% if page >= total_pages %} style="pointer-events:none;opacity:.4" aria-disabled="true"{% endif %}>Next &rarr;</a>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+const CAT_SUBCATEGORIES = {{ cat_subcategories|tojson }};
+
+function updateBrandOptions(catSelectId, brandSelectId, selected){
+  const cat = document.getElementById(catSelectId).value;
+  const brandSelect = document.getElementById(brandSelectId);
+  const opts = CAT_SUBCATEGORIES[cat] || ['Generic'];
+  brandSelect.innerHTML = opts.map(b => `<option value="${b}" ${b===selected?'selected':''}>${b}</option>`).join('');
+}
+updateBrandOptions('ap-category','ap-brand');
+</script>
+{% endblock %}

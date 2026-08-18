@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">Customer Directory</div><h1>Customers</h1></div>
+  <div class="quick-actions">
+    <button type="button" class="btn-primary" style="padding:9px 16px;border-radius:8px;font-weight:700"
+      onclick="document.getElementById('new-customer-panel').classList.toggle('open')">+ New Customer</button>
+  </div>
+</div>
+
+<div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+  <div class="stat-card">
+    <span class="stat-icon">{{ icon('user') }}</span>
+    <div class="stat-label">Total Customers</div>
+    <div class="stat-value">{{ total_customers }}</div>
+  </div>
+  <div class="stat-card">
+    <span class="stat-icon">{{ icon('credit-card') }}</span>
+    <div class="stat-label">Store Credit Outstanding</div>
+    <div class="stat-value text-green">${{ "%.2f"|format(total_store_credit) }}</div>
+  </div>
+  <div class="stat-card">
+    <span class="stat-icon">⭐</span>
+    <div class="stat-label">Loyalty Points Outstanding</div>
+    <div class="stat-value">{{ total_points }}</div>
+  </div>
+</div>
+
+<div class="card collapsible-panel" id="new-customer-panel">
+  <h2>New Customer</h2>
+  <form method="post" action="/customers/add" class="form-row" style="align-items:flex-end"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-group"><label>Name</label><input name="name" required></div>
+    <div class="form-group"><label>Phone</label><input name="phone"></div>
+    <div class="form-group"><label>Email</label><input name="email"></div>
+    <div class="form-group" style="flex-direction:row;align-items:center;gap:6px">
+      <input type="checkbox" name="marketing_consent" id="nc-consent" style="width:auto">
+      <label for="nc-consent" style="margin:0;font-size:12px">Consents to marketing</label>
+    </div>
+    <button class="btn-primary">Add</button>
+  </form>
+</div>
+
+<div class="card">
+  <form method="get" action="/customers" class="search-box" style="max-width:none;margin-bottom:12px">
+    <span class="search-icon">{{ icon('search', size=15) }}</span>
+    <input type="text" name="q" value="{{ q }}" placeholder="Search by name, phone, or email — press Enter" autocomplete="off">
+    {% if q %}<a href="/customers" class="btn-secondary btn-sm" style="margin-left:8px">Clear</a>{% endif %}
+  </form>
+  <table id="customer-table">
+    <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Spent</th><th>Points</th><th>Store Credit</th><th></th></tr></thead>
+    <tbody>
+      {% for c in customers %}
+      <tr>
+        <td><a href="/customers/{{ c.id }}"><span class="avatar-pill">{{ c.name[:1]|upper }}</span>{{ c.name }}</a></td>
+        <td class="text-muted">{{ c.phone or '—' }}</td>
+        <td class="text-muted">{{ c.email or '—' }}</td>
+        <td>${{ "%.2f"|format(c.spent) }}</td>
+        <td>{{ c.points }}</td>
+        <td class="text-green">${{ "%.2f"|format(c.store_credit) }}</td>
+        <td><a href="/customers/{{ c.id }}" class="btn-secondary btn-sm">Edit →</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7"><div class="empty-state"><div class="icon">{{ icon('user', size=32) }}</div>
+        {% if q %}No customers match "{{ q }}".{% else %}No customers yet — add one above.{% endif %}
+      </div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if not q and total_pages > 1 %}
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+    <div class="text-muted" style="font-size:12px">
+      Showing {{ (page - 1) * page_size + 1 }}–{{ [page * page_size, total_customers]|min }} of {{ total_customers }}
+    </div>
+    <div style="display:flex;gap:8px">
+      <a href="/customers?page={{ page - 1 }}" class="btn-secondary btn-sm"{% if page <= 1 %} style="pointer-events:none;opacity:.4" aria-disabled="true"{% endif %}>&larr; Previous</a>
+      <span class="text-muted" style="font-size:12px;align-self:center">Page {{ page }} of {{ total_pages }}</span>
+      <a href="/customers?page={{ page + 1 }}" class="btn-secondary btn-sm"{% if page >= total_pages %} style="pointer-events:none;opacity:.4" aria-disabled="true"{% endif %}>Next &rarr;</a>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

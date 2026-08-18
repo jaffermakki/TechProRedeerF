@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+/* ── Trade-in receipt — same warm paper / forest green language as the
+   invoice print view, so every printed document in this shop looks like
+   it came from the same place. Reuses the .inv-* class names directly
+   rather than inventing a parallel set for a document this similar. ── */
+#print-area .inv-wrap {
+  font-family: 'Georgia', 'Times New Roman', serif;
+  max-width: 640px; margin: 0 auto; padding: 48px 52px;
+  background: #fdfcf9; color: #2c2c2c; box-sizing: border-box;
+  border: 1px solid #e8e2d9;
+}
+#print-area .inv-wrap * { box-sizing: border-box }
+#print-area .inv-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 28px; padding-bottom: 22px; border-bottom: 2px solid #1e5c3a;
+}
+#print-area .inv-brand img { height: 42px; width: auto; object-fit: contain }
+#print-area .inv-brand-addr {
+  font-size: 11px; color: #7a7060; line-height: 1.8; margin-top: 8px;
+  font-family: 'Inter', Arial, sans-serif;
+}
+#print-area .inv-brand-addr strong { color: #2c2c2c }
+#print-area .inv-number-block { text-align: right }
+#print-area .inv-number-block .label {
+  font-size: 10px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase;
+  color: #1e5c3a; font-family: 'Inter', Arial, sans-serif; margin-bottom: 4px
+}
+#print-area .inv-number-block .number {
+  font-size: 26px; font-weight: 700; color: #1e5c3a;
+  letter-spacing: -0.5px; font-family: 'Georgia', serif;
+}
+#print-area .inv-number-block .meta {
+  font-size: 11px; color: #7a7060; margin-top: 8px; line-height: 1.8;
+  font-family: 'Inter', Arial, sans-serif;
+}
+#print-area .inv-status-band {
+  background: #f0f5f1; border: 1px solid #c8dece; border-radius: 8px;
+  padding: 12px 20px; display: flex; justify-content: space-between;
+  align-items: center; margin-bottom: 24px;
+}
+#print-area .inv-status-band .s-item { text-align: center }
+#print-area .inv-status-band .s-label {
+  font-size: 9.5px; letter-spacing: 1.2px; text-transform: uppercase;
+  color: #5a8a6a; display: block; margin-bottom: 3px;
+  font-family: 'Inter', Arial, sans-serif; font-weight: 600;
+}
+#print-area .inv-status-band .s-value {
+  font-size: 13px; font-weight: 700; color: #1e3a28;
+  font-family: 'Inter', Arial, sans-serif;
+}
+#print-area .inv-billto {
+  background: #f8f5ee; border-left: 3px solid #1e5c3a;
+  border-radius: 0 6px 6px 0; padding: 13px 18px; margin-bottom: 22px;
+}
+#print-area .inv-billto .bt-label {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+  color: #1e5c3a; margin-bottom: 5px; font-family: 'Inter', Arial, sans-serif;
+}
+#print-area .inv-billto .bt-name {
+  font-size: 15px; font-weight: 700; color: #1e3a28; font-family: 'Georgia', serif;
+}
+#print-area .inv-billto .bt-meta {
+  font-size: 11.5px; color: #7a7060; margin-top: 3px; font-family: 'Inter', Arial, sans-serif;
+}
+#print-area .device-card {
+  background: #fff; border: 1px solid #e8e2d9; border-radius: 8px;
+  padding: 18px 20px; margin-bottom: 22px;
+}
+#print-area .device-row {
+  display: flex; justify-content: space-between; padding: 7px 0;
+  border-bottom: 1px solid #ede8df; font-family: 'Inter', Arial, sans-serif;
+}
+#print-area .device-row:last-child { border-bottom: none }
+#print-area .device-row .d-label { font-size: 11.5px; color: #7a7060 }
+#print-area .device-row .d-value { font-size: 13px; color: #2c2c2c; font-weight: 600; text-align: right; max-width: 60%; }
+#print-area .inv-totals { display: flex; justify-content: flex-end; margin: 16px 0 24px }
+#print-area .inv-totals-inner { width: 280px }
+#print-area .tot-row {
+  display: flex; justify-content: space-between; padding: 5px 0;
+  font-size: 12.5px; color: #6b6456; border-bottom: 1px solid #ede8df;
+  font-family: 'Inter', Arial, sans-serif;
+}
+#print-area .tot-row:last-child { border-bottom: none }
+#print-area .tot-row.grand {
+  font-size: 17px; font-weight: 700; color: #1e3a28;
+  border-top: 2px solid #b8964a; border-bottom: none;
+  padding-top: 12px; margin-top: 6px; font-family: 'Georgia', serif;
+}
+#print-area .pay-badge {
+  display: inline-block; background: #e8f5ec; color: #1e5c3a;
+  border: 1px solid #b0d8bc; border-radius: 999px;
+  padding: 3px 12px; font-size: 11px; font-weight: 700;
+  font-family: 'Inter', Arial, sans-serif; letter-spacing: .3px;
+}
+#print-area .inv-footer {
+  display: flex; justify-content: space-between; align-items: center;
+  padding-top: 18px; margin-top: 4px; border-top: 1px solid #c8dece;
+}
+#print-area .inv-footer-left { font-size: 12px; color: #5a8a6a; font-style: italic; font-family: 'Georgia', serif; }
+#print-area .inv-footer-right { font-size: 10.5px; color: #a89880; text-align: right; font-family: 'Inter', Arial, sans-serif; line-height: 1.7; }
+@media print {
+  .sidebar, .no-print { display:none !important; }
+  .content { padding:0 !important; }
+  html, body { background: #fdfcf9 !important; }
+  #print-area .inv-wrap { -webkit-print-color-adjust: exact; print-color-adjust: exact; border:none; }
+}
+@page { margin: 0; }
+</style>
+
+<h1 class="no-print">Trade-In Receipt {{ trade_in.number or trade_in.id[:8]|upper }}</h1>
+
+<div id="print-area">
+  <div class="inv-wrap">
+    <div class="inv-header">
+      <div class="inv-brand">
+        <img src="/static/logo-dark.png" alt="{{ shop.name }}"/>
+        <p class="inv-brand-addr">
+          <strong>{{ shop.name }}</strong><br/>
+          {{ shop.address }}<br/>
+          {% if shop.phone %}{{ shop.phone }}<br/>{% endif %}
+          {{ shop.email }}
+        </p>
+      </div>
+      <div class="inv-number-block">
+        <div class="label">Trade-In Receipt</div>
+        <div class="number">{{ trade_in.number or trade_in.id[:8]|upper }}</div>
+        <div class="meta">Date: {{ trade_in.created_at|datefmt('%B {d}, %Y') }}</div>
+      </div>
+    </div>
+
+    <div class="inv-status-band">
+      <div class="s-item"><span class="s-label">Receipt #</span><span class="s-value">{{ trade_in.number or trade_in.id[:8]|upper }}</span></div>
+      <div class="s-item"><span class="s-label">Date</span><span class="s-value">{{ trade_in.created_at|datefmt('%b {d}, %Y') }}</span></div>
+      <div class="s-item"><span class="s-label">Payout</span><span class="s-value">{{ trade_in.payout_method.replace('_', ' ')|title }}</span></div>
+      <div class="s-item"><span class="s-label">Amount (CAD)</span><span class="s-value" style="color:#1e5c3a;font-size:16px;font-family:'Georgia',serif">${{ "%.2f"|format(trade_in.offered_amount) }}</span></div>
+    </div>
+
+    <div class="inv-billto">
+      <div class="bt-label">Device Traded In By</div>
+      <div class="bt-name">{{ trade_in.customer.name if trade_in.customer else 'Walk-in Customer' }}</div>
+      {% if trade_in.customer and trade_in.customer.phone %}<div class="bt-meta">{{ icon('phone') }} {{ trade_in.customer.phone }}</div>{% endif %}
+    </div>
+
+    <div class="device-card">
+      <div class="device-row"><span class="d-label">Device</span><span class="d-value">{{ trade_in.device }}</span></div>
+      {% if trade_in.imei %}<div class="device-row"><span class="d-label">IMEI / Serial</span><span class="d-value" style="font-family:monospace;font-weight:400">{{ trade_in.imei }}</span></div>{% endif %}
+      {% if trade_in.condition %}<div class="device-row"><span class="d-label">Condition</span><span class="d-value" style="font-weight:400">{{ trade_in.condition }}</span></div>{% endif %}
+      {% if trade_in.notes %}<div class="device-row"><span class="d-label">Notes</span><span class="d-value" style="font-weight:400">{{ trade_in.notes }}</span></div>{% endif %}
+      <div class="device-row"><span class="d-label">Accepted By</span><span class="d-value" style="font-weight:400">{{ trade_in.staff_name }}</span></div>
+    </div>
+
+    <div class="inv-totals">
+      <div class="inv-totals-inner">
+        <div class="tot-row grand"><span>Amount (CAD)</span><span>${{ "%.2f"|format(trade_in.offered_amount) }}</span></div>
+        <div class="tot-row" style="margin-top:10px"><span>Payout Method</span><span><span class="pay-badge">{{ trade_in.payout_method.replace('_', ' ')|title }}</span></span></div>
+      </div>
+    </div>
+
+    <div class="inv-footer">
+      <div class="inv-footer-left">Thank you for choosing {{ shop.name }}</div>
+      <div class="inv-footer-right">{{ trade_in.number or trade_in.id[:8]|upper }} · {{ trade_in.created_at|datefmt('%b {d}, %Y') }}<br/>Prices in CAD</div>
+    </div>
+  </div>
+</div>
+
+<div class="no-print" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+  <button onclick="window.print()" class="btn-primary">{{ icon('printer') }} Print Receipt</button>
+  <a href="/trade-ins" class="btn-secondary">&larr; Back to Trade-Ins</a>
+</div>
+{% endblock %}

@@ -1,0 +1,538 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  /* POS runs full-bleed: no page chrome, no scroll, everything on one screen.
+     The utility classes this screen uses now live in style.css — the
+     Tailwind CDN <script> that used to sit here is gone, so the till
+     renders identically with the internet unplugged. */
+  .content { padding: 0 !important; }
+  :root { --pos-height: calc(100vh); }
+  .pos-root { height: var(--pos-height); display: flex; overflow: hidden; background: var(--bg); }
+  .pos-pane-head { background: var(--surface); border-bottom: 1px solid var(--border); }
+  .pos-filter-label { font-size: 10px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+    color: var(--text-3); margin-right: 4px; }
+  /* A quick confirmation pulse on the cart panel after every AJAX update —
+     since there's no more page reload, this is what tells the cashier the
+     tap registered. */
+  #cart-panel.flash { animation: cart-flash .32s ease-out; }
+  @keyframes cart-flash {
+    0% { box-shadow: inset 0 0 0 1px var(--accent-border), -8px 0 24px -16px rgba(0,0,0,.6); }
+    100% { box-shadow: -8px 0 24px -16px rgba(0,0,0,.6); }
+  }
+</style>
+
+<div class="pos-root">
+
+  <!-- LEFT: Product Browser -->
+  <div class="flex flex-col" style="flex:1.5;border-right:1px solid var(--border);overflow:hidden">
+
+    <!-- Search + Filters -->
+    <div class="flex gap-2 p-3 flex-wrap" style="background:var(--surface);border-bottom:1px solid var(--border)">
+      <form method="post" action="/pos/scan" id="scan-form" class="flex-1 flex gap-2" style="min-width:200px" data-pos-ajax><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input name="sku" id="sku-search" placeholder="Scan barcode or search SKU..." autofocus required
+          class="flex-1 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400"
+          style="background:var(--surface-2);border:1px solid var(--border-strong)">
+        <button type="submit" class="px-3 py-2 rounded-lg text-sm text-gray-300" style="background:var(--surface-3)">Go</button>
+      </form>
+    </div>
+    <div id="scan-feedback" class="hidden px-3 py-2 text-xs" style="background:var(--red-soft);color:var(--red);border-bottom:1px solid var(--border)"></div>
+
+    <div class="flex gap-1.5 px-3 pt-2.5 pb-1 flex-wrap items-center" style="background:var(--surface);border-bottom:1px solid var(--border)">
+      <span class="text-xs font-semibold mr-0.5" style="color:var(--text-3)">Category</span>
+      <button type="button" class="chip active" data-chipgroup="cat" data-value="" onclick="setCatFilter(this,'')">All</button>
+      {% for key, label in category_labels.items() %}
+      <button type="button" class="chip" data-chipgroup="cat" data-value="{{ key }}" onclick="setCatFilter(this,'{{ key }}')">{{ label }}</button>
+      {% endfor %}
+    </div>
+    {% if all_brands %}
+    <div class="flex gap-1.5 px-3 pb-2.5 flex-wrap items-center" style="background:var(--surface);border-bottom:1px solid var(--border)">
+      <span class="text-xs font-semibold mr-0.5" style="color:var(--text-3)">Case Maker</span>
+      <button type="button" class="chip active" data-chipgroup="brand" data-value="" onclick="setBrandFilter(this,'')">All</button>
+      {% for b in all_brands %}
+      <button type="button" class="chip" data-chipgroup="brand" data-value="{{ b }}" onclick="setBrandFilter(this,'{{ b }}')">{{ b }}</button>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if all_phone_brands %}
+    <div class="flex gap-1.5 px-3 pb-2.5 flex-wrap items-center" style="background:var(--surface);border-bottom:1px solid var(--border)">
+      <span class="text-xs font-semibold mr-0.5" style="color:var(--text-3)">Phone</span>
+      <button type="button" class="chip active" data-chipgroup="phone" data-value="" onclick="setPhoneFilter(this,'')">All</button>
+      {% for b in all_phone_brands %}
+      <button type="button" class="chip" data-chipgroup="phone" data-value="{{ b }}" onclick="setPhoneFilter(this,'{{ b }}')">{{ b }}</button>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if repair_ctx %}
+    <div class="mx-3 mt-2 px-3 py-2 rounded-lg text-xs flex items-center justify-between" style="background:var(--blue-soft);border:1px solid var(--blue-soft);color:var(--blue)">
+      <span>{{ icon('wrench') }} Charging for Repair <a href="/repairs/{{ repair_ctx.id }}" style="color:var(--blue);text-decoration:underline">#{{ repair_ctx.ticket_no }}</a> — {{ repair_ctx.device }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Product grid -->
+    <div class="flex-1 overflow-y-auto cart-scroll p-3">
+      <div class="grid gap-2" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))" id="pos-product-grid">
+        {% for g in product_groups %}
+        <div class="prod-tile prod-tile-group cursor-pointer rounded-xl p-3 flex flex-col gap-1 select-none"
+             style="background:var(--surface);border:1px solid var(--border-strong);position:relative"
+             data-categories="{{ g.categories|join('|')|e }}"
+             data-brands="{{ g.brands|join('|')|e }}"
+             data-phone-brands="{{ g.phone_brands|join('|')|e }}"
+             onclick="openVariantPicker('{{ g.name|e }}')"
+             onmouseover="this.style.borderColor='var(--teal)'"
+             onmouseout="this.style.borderColor='var(--border)'">
+          <div class="flex justify-between items-start">
+            <span class="text-xs px-1.5 py-0.5 rounded font-medium" style="background:var(--teal-soft);color:var(--teal)">
+              {{ g.variants|length }} options
+            </span>
+            {% if g.low_stock %}<span class="text-xs" style="color:var(--red)" title="At least one variant is low on stock">{{ icon('triangle-alert') }}</span>{% endif %}
+          </div>
+          <div class="font-semibold text-sm leading-tight mt-1" style="color:var(--text)">{{ g.name }}</div>
+          <div class="text-xs" style="color:var(--text-3)">Pick model &amp; color</div>
+          <div class="font-bold text-base mt-auto" style="color:var(--accent-text)">
+            {% if g.min_price == g.max_price %}${{ "%.2f"|format(g.min_price) }}
+            {% else %}${{ "%.2f"|format(g.min_price) }}–{{ "%.2f"|format(g.max_price) }}{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+
+        {% for p in ungrouped_products %}
+        <div class="prod-tile cursor-pointer rounded-xl p-3 flex flex-col gap-1 select-none"
+             style="background:var(--surface);border:1px solid var(--border-strong)"
+             data-pid="{{ p.id }}"
+             data-name="{{ p.name|e }}"
+             data-sku="{{ p.sku|e }}"
+             data-price="{{ p.price }}"
+             data-stock="{{ p.stock }}"
+             data-category="{{ p.category }}"
+             data-brand="{{ p.subcategory|e }}"
+             data-phone-brand="{{ p.phone_brand|e }}"
+             onclick="openPriceModal(this.dataset)"
+             onmouseover="this.style.borderColor='var(--accent)'"
+             onmouseout="this.style.borderColor='var(--border)'">
+          <div class="flex justify-between items-start">
+            <span class="text-xs px-1.5 py-0.5 rounded font-medium"
+              style="{% if p.stock <= 0 %}background:var(--red-soft);color:var(--red){% elif p.stock <= p.reorder_threshold %}background:var(--warn-soft);color:var(--warn){% else %}background:var(--green-soft);color:var(--green){% endif %}">
+              {% if p.stock <= 0 %}Out{% else %}{{ p.stock }}{% endif %}
+            </span>
+            {% if p.subcategory %}
+            <span class="text-xs truncate" style="color:var(--text-3);max-width:70px">{{ p.subcategory }}</span>
+            {% endif %}
+          </div>
+          <div class="font-semibold text-sm leading-tight mt-1" style="color:var(--text)">{{ p.name }}</div>
+          <div class="text-xs font-mono" style="color:var(--text-3)">{{ p.sku }}</div>
+          <div class="font-bold text-base mt-auto" style="color:var(--accent-text)">${{ "%.2f"|format(p.price) }}</div>
+        </div>
+        {% else %}
+        {% if not product_groups %}
+        <div class="col-span-full text-center py-12 text-sm" style="color:var(--text-3)">No products yet</div>
+        {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Cart + Payment -->
+  <div class="flex flex-col" id="cart-panel" style="width:380px;min-width:340px;background:var(--surface);box-shadow:-8px 0 24px -16px rgba(0,0,0,.6)">
+{% include "partials/pos_cart.html" %}
+  </div>
+</div>
+
+<!-- Price Modal -->
+<div id="price-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2000;align-items:center;justify-content:center;padding:16px">
+  <div class="rounded-2xl p-6 w-full shadow-2xl" style="background:var(--surface-2);border:1px solid var(--border-strong);max-width:320px">
+    <div class="flex justify-between items-start mb-1">
+      <h3 id="pm-title" class="font-bold text-lg leading-tight flex-1" style="color:var(--text)"></h3>
+      <button onclick="closePriceModal()" class="text-xl ml-2" style="color:var(--text-3)">✕</button>
+    </div>
+    <div id="pm-sku" class="text-xs font-mono mb-4" style="color:var(--text-3)"></div>
+    <div id="pm-stock-warn" class="hidden text-xs mb-3 rounded-lg px-3 py-2" style="background:var(--red-soft);color:var(--red)">{{ icon('triangle-alert') }} Out of stock</div>
+    <form method="post" action="/pos/add-custom" data-pos-ajax><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="product_id" id="pm-product-id">
+      <label class="text-xs block mb-1.5" style="color:var(--text-3)">Price for this sale</label>
+      <input type="number" name="custom_price" id="pm-price" step="0.01" min="0" required
+        class="w-full rounded-xl px-4 py-3 text-2xl font-bold text-center focus:outline-none mb-1"
+        style="background:var(--surface-inset);border:2px solid var(--accent);color:var(--accent-text)">
+      <div class="text-xs text-center mb-4" style="color:var(--text-3)">Tax calculated at checkout</div>
+      <div class="grid grid-cols-2 gap-3">
+        <button type="button" onclick="closePriceModal()"
+          class="py-3 rounded-xl font-semibold" style="background:var(--surface-3);color:var(--text-2)">Cancel</button>
+        <button type="submit"
+          class="py-3 rounded-xl font-bold" style="background:var(--accent);color:var(--on-accent)">Add to Cart</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Variant Picker Modal — shown when a grouped case tile is clicked -->
+<div id="variant-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2000;align-items:center;justify-content:center;padding:16px">
+  <div class="rounded-2xl p-5 w-full shadow-2xl" style="background:var(--surface-2);border:1px solid var(--border-strong);max-width:380px;max-height:80vh;display:flex;flex-direction:column">
+    <div class="flex justify-between items-start mb-1">
+      <h3 id="vm-title" class="font-bold text-lg leading-tight flex-1" style="color:var(--text)"></h3>
+      <button onclick="closeVariantPicker()" class="text-xl ml-2" style="color:var(--text-3)">✕</button>
+    </div>
+    <div class="text-xs mb-2" style="color:var(--text-3)">Pick the exact model &amp; color</div>
+    <input id="vm-search" type="text" placeholder="Filter by model or color..." oninput="renderVariantList()"
+      class="rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none mb-2"
+      style="background:var(--surface);border:1px solid var(--border-strong)">
+    <div id="vm-list" class="overflow-y-auto" style="display:flex;flex-direction:column;gap:6px"></div>
+  </div>
+</div>
+
+<script id="variant-group-data" type="application/json">{{ variant_group_data|tojson }}</script>
+
+<script>
+let TOTAL = {{ total }};
+const CAT_SUBS = {{ cat_subcategories|tojson }};
+const VARIANT_GROUPS = JSON.parse(document.getElementById('variant-group-data').textContent);
+let currentPayment = 'Cash';
+let selectedCat = '';
+let selectedBrand = '';
+let selectedPhoneBrand = '';
+
+function filterProducts(){
+  document.querySelectorAll('#pos-product-grid .prod-tile:not(.prod-tile-group)').forEach(tile => {
+    const mc = !selectedCat || tile.dataset.category === selectedCat;
+    const mb = !selectedBrand || tile.dataset.brand === selectedBrand;
+    const mp = !selectedPhoneBrand || tile.dataset.phoneBrand === selectedPhoneBrand;
+    tile.style.display = (mc && mb && mp) ? '' : 'none';
+  });
+  // Grouped tiles: show if ANY variant inside matches the active filter —
+  // a case type spanning multiple phone brands shouldn't disappear just
+  // because one brand chip is selected.
+  document.querySelectorAll('#pos-product-grid .prod-tile-group').forEach(tile => {
+    const cats = (tile.dataset.categories || '').split('|');
+    const brands = (tile.dataset.brands || '').split('|');
+    const phoneBrands = (tile.dataset.phoneBrands || '').split('|');
+    const mc = !selectedCat || cats.includes(selectedCat);
+    const mb = !selectedBrand || brands.includes(selectedBrand);
+    const mp = !selectedPhoneBrand || phoneBrands.includes(selectedPhoneBrand);
+    tile.style.display = (mc && mb && mp) ? '' : 'none';
+  });
+}
+function setCatFilter(btn, value){
+  selectedCat = value;
+  document.querySelectorAll('[data-chipgroup="cat"]').forEach(c => c.classList.toggle('active', c === btn));
+  filterProducts();
+}
+function setBrandFilter(btn, value){
+  selectedBrand = value;
+  document.querySelectorAll('[data-chipgroup="brand"]').forEach(c => c.classList.toggle('active', c === btn));
+  filterProducts();
+}
+function setPhoneFilter(btn, value){
+  selectedPhoneBrand = value;
+  document.querySelectorAll('[data-chipgroup="phone"]').forEach(c => c.classList.toggle('active', c === btn));
+  filterProducts();
+}
+
+function openPriceModal(tile){
+  document.getElementById('pm-product-id').value = tile.pid;
+  document.getElementById('pm-title').textContent = tile.name;
+  document.getElementById('pm-sku').textContent = tile.sku;
+  document.getElementById('pm-price').value = parseFloat(tile.price).toFixed(2);
+  document.getElementById('pm-stock-warn').classList.toggle('hidden', parseInt(tile.stock) > 0);
+  document.getElementById('price-modal').style.display = 'flex';
+  setTimeout(() => { const i=document.getElementById('pm-price'); i.focus(); i.select(); }, 80);
+}
+function closePriceModal(){ document.getElementById('price-modal').style.display='none'; }
+document.getElementById('price-modal').addEventListener('click', e => { if(e.target===e.currentTarget) closePriceModal(); });
+document.addEventListener('keydown', e => { if(e.key==='Escape'){ closePriceModal(); closeVariantPicker(); } });
+
+let currentVariantList = [];
+
+function openVariantPicker(groupName){
+  currentVariantList = VARIANT_GROUPS[groupName] || [];
+  document.getElementById('vm-title').textContent = groupName;
+  const search = document.getElementById('vm-search');
+  search.value = '';
+  renderVariantList();
+  document.getElementById('variant-modal').style.display = 'flex';
+  setTimeout(() => search.focus(), 80);
+}
+
+function renderVariantList(){
+  const q = document.getElementById('vm-search').value.toLowerCase().trim();
+  const list = document.getElementById('vm-list');
+  list.innerHTML = '';
+
+  const variants = currentVariantList.filter(v => {
+    if (!q) return true;
+    const haystack = [v.name, v.phone_brand, v.phone_model, v.color, v.sku].join(' ').toLowerCase();
+    return haystack.includes(q);
+  });
+
+  if (!variants.length) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'text-align:center;padding:16px;font-size:12px;color:var(--text-3)';
+    empty.textContent = 'No variant matches that filter.';
+    list.appendChild(empty);
+    return;
+  }
+
+  variants.forEach(v => {
+    const out = v.stock <= 0;
+    const low = !out && v.stock <= v.reorder_threshold;
+    const badgeColor = out ? 'var(--red)' : (low ? 'var(--warn)' : 'var(--green)');
+    const badgeBg = out ? 'var(--red-soft)' : (low ? 'var(--warn-soft)' : 'var(--green-soft)');
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;text-align:left;background:var(--surface);border:1px solid var(--border-strong);border-radius:10px;padding:10px 12px;cursor:pointer;width:100%';
+    // Built via textContent/DOM properties throughout, not string
+    // interpolation — safe regardless of apostrophes or quotes in a
+    // product's actual name.
+    btn.innerHTML = `
+      <span>
+        <span class="vm-name" style="display:block;font-weight:600;font-size:13px;color:var(--text)"></span>
+        <span class="vm-meta" style="display:block;font-size:11px;color:var(--text-3);font-family:monospace"></span>
+      </span>
+      <span style="text-align:right;flex-shrink:0">
+        <span class="vm-stock" style="display:block;font-size:10px;font-weight:600;padding:2px 6px;border-radius:5px;background:${badgeBg};color:${badgeColor}"></span>
+        <span class="vm-price" style="display:block;font-size:13px;font-weight:700;color:var(--accent-text);margin-top:3px"></span>
+      </span>`;
+    btn.querySelector('.vm-name').textContent = v.name;
+    btn.querySelector('.vm-meta').textContent = v.sku + (v.brand ? ' · ' + v.brand : '');
+    btn.querySelector('.vm-stock').textContent = out ? 'Out' : v.stock + ' left';
+    btn.querySelector('.vm-price').textContent = '$' + parseFloat(v.price).toFixed(2);
+    btn.addEventListener('click', () => selectVariant(v));
+    list.appendChild(btn);
+  });
+}
+function selectVariant(v){
+  closeVariantPicker();
+  openPriceModal(v);
+}
+function closeVariantPicker(){ document.getElementById('variant-modal').style.display='none'; }
+document.getElementById('variant-modal').addEventListener('click', e => { if(e.target===e.currentTarget) closeVariantPicker(); });
+
+function updateChange(){
+  const t = parseFloat(document.getElementById('tendered-input').value||0);
+  const c = Math.max(0, t-TOTAL);
+  const el = document.getElementById('change-display');
+  el.textContent = '$'+c.toFixed(2);
+  el.style.color = c>0 ? 'var(--green)' : 'var(--text-2)';
+}
+function setTendered(amt){ document.getElementById('tendered-input').value=amt.toFixed(2); updateChange(); }
+function setExact(){ document.getElementById('tendered-input').value=TOTAL.toFixed(2); updateChange(); }
+
+function updateSplitChange(){
+  const cash = parseFloat(document.getElementById('split-cash').value||0);
+  const card = parseFloat(document.getElementById('split-card').value||0);
+  const diff = (cash+card)-TOTAL;
+  const el = document.getElementById('split-status');
+  if(!cash && !card){ el.textContent=''; return; }
+  if(diff<0){ el.textContent=`Short by $${Math.abs(diff).toFixed(2)}`; el.style.color='var(--red)'; }
+  else if(diff>0){ el.textContent=`Change: $${diff.toFixed(2)}`; el.style.color='var(--green)'; }
+  else { el.textContent='Exact amount'; el.style.color='var(--green)'; }
+}
+
+function selectPayment(pm){
+  currentPayment = pm;
+  document.querySelectorAll('.pay-pill').forEach(b=>{
+    b.classList.remove('active');
+    b.style.background='var(--surface-2)';
+    b.style.color='var(--text-3)';
+    b.style.borderColor='var(--border)';
+  });
+  const btn = document.getElementById('pm-'+pm.replace(/ /g,'_'));
+  if(btn){ btn.classList.add('active'); btn.style.background='var(--accent)'; btn.style.color='var(--on-accent)'; btn.style.borderColor='var(--accent)'; }
+
+  ['Cash','Split','UPI'].forEach(s=>{
+    const el=document.getElementById('section-'+s);
+    if(el) el.classList.toggle('hidden', s!==pm);
+  });
+  // Card ref and the "charge it on the terminal first" reminder both
+  // apply to any method with an actual card-terminal leg.
+  const refSection = document.getElementById('section-CardRef');
+  if (refSection) refSection.classList.toggle('hidden', pm!=='Card' && pm!=='Split');
+  const reminder = document.getElementById('charge-reminder');
+  if (reminder) reminder.classList.toggle('hidden', pm!=='Card' && pm!=='Split');
+}
+
+function setDiscMode(mode){
+  document.getElementById('disc-mode-field').value = mode;
+  const d = document.getElementById('disc-btn-dollar');
+  const p = document.getElementById('disc-btn-pct');
+  if(mode==='$'){ d.style.background='var(--accent)';d.style.color='var(--on-accent)';p.style.background='var(--surface-2)';p.style.color='var(--text-3)'; }
+  else { p.style.background='var(--accent)';p.style.color='var(--on-accent)';d.style.background='var(--surface-2)';d.style.color='var(--text-3)'; }
+  // requestSubmit(), not submit() — .submit() bypasses the 'submit' event
+  // entirely, which is what the AJAX takeover below listens for.
+  document.getElementById('disc-main-form').requestSubmit();
+}
+
+function submitCheckout(){
+  const pm = currentPayment;
+  document.getElementById('final-payment-method').value = pm;
+  const refInput = document.getElementById('card-ref-input');
+  document.getElementById('final-card-reference').value = (pm==='Card' || pm==='Split') && refInput ? refInput.value.trim() : '';
+  if(pm==='Split'){
+    const cash=parseFloat(document.getElementById('split-cash').value||0);
+    const card=parseFloat(document.getElementById('split-card').value||0);
+    if((cash+card)<TOTAL){ alert(`Split total ($${(cash+card).toFixed(2)}) is less than total ($${TOTAL.toFixed(2)})`); return; }
+    document.getElementById('final-cash-part').value=cash;
+    document.getElementById('final-card-part').value=card;
+    document.getElementById('final-tendered').value=0;
+  } else if(pm==='Cash'){
+    document.getElementById('final-tendered').value=document.getElementById('tendered-input').value||0;
+    document.getElementById('final-cash-part').value=0;
+    document.getElementById('final-card-part').value=0;
+  } else {
+    document.getElementById('final-tendered').value=0;
+    document.getElementById('final-cash-part').value=0;
+    document.getElementById('final-card-part').value=0;
+  }
+  document.getElementById('checkout-form').submit();
+}
+
+// ── Instant cart updates ────────────────────────────────────────────
+// Every cart-mutating form on this screen (add, remove, qty, discount,
+// customer, redeem, hold/recall, scan) is marked data-pos-ajax. Submitting
+// one used to be a full page POST+redirect+reload; now it's a fetch() that
+// swaps just the #cart-panel markup back in. The server-side rendering is
+// untouched — app/main.py returns the exact same partial either way — so
+// this is purely a transport change, not a new code path to keep in sync.
+//
+// Every one of these forms still works with JS off or the network down:
+// without the X-Pos-Ajax header the server does its original redirect, and
+// the catch{} below falls back to a real form.submit() on any fetch failure.
+const cartPanel = document.getElementById('cart-panel');
+
+async function posAjaxSubmit(form, submitter){
+  // Nothing below is required for correctness — the swap is already
+  // correct without it — this only carries a few in-progress, session-only
+  // values across the refresh that a full reload has always thrown away.
+  const tenderedEl = document.getElementById('tendered-input');
+  const splitCashEl = document.getElementById('split-cash');
+  const splitCardEl = document.getElementById('split-card');
+  const cardRefEl = document.getElementById('card-ref-input');
+  const tenderedVal = tenderedEl ? tenderedEl.value : '';
+  const splitCashVal = splitCashEl ? splitCashEl.value : '';
+  const splitCardVal = splitCardEl ? splitCardEl.value : '';
+  const cardRefVal = cardRefEl ? cardRefEl.value : '';
+  const holdPanel = document.getElementById('hold-panel');
+  const holdOpen = holdPanel ? !holdPanel.classList.contains('hidden') : false;
+  const scrollEl = document.getElementById('cart-items-scroll');
+  const scrollTop = scrollEl ? scrollEl.scrollTop : 0;
+
+  let html;
+  try {
+    // A plain `new FormData(form)` only captures real form fields — it does
+    // NOT include a clicked <button name=... value=...>'s pair (that's
+    // normally added by the browser's native "submitter" handling, which
+    // fetch() bypasses entirely). The qty +/- buttons carry their value
+    // exactly that way, so without this the server would see no qty field
+    // at all. Folding it in manually keeps this correct for any current or
+    // future button-name-value form without special-casing qty by name.
+    const fd = new FormData(form);
+    if (submitter && submitter.name) fd.set(submitter.name, submitter.value);
+
+    const res = await fetch(form.action, {
+      method: 'POST',
+      body: fd,
+      headers: { 'X-Pos-Ajax': '1' },
+    });
+    if (!res.ok) throw new Error('POS update failed: ' + res.status);
+    html = await res.text();
+  } catch (err) {
+    // Couldn't complete over fetch (offline, server hiccup) — fall back to
+    // exactly what this screen has always done rather than leave a click
+    // with no visible effect.
+    form.submit();
+    return;
+  }
+
+  cartPanel.innerHTML = html;
+  TOTAL = parseFloat(document.getElementById('cart-total-carrier')?.dataset.total || '0');
+
+  if (tenderedEl && tenderedVal) {
+    const t = document.getElementById('tendered-input');
+    if (t) t.value = tenderedVal;
+  }
+  if (splitCashEl && splitCashVal) {
+    const sc = document.getElementById('split-cash');
+    if (sc) sc.value = splitCashVal;
+  }
+  if (splitCardEl && splitCardVal) {
+    const sk = document.getElementById('split-card');
+    if (sk) sk.value = splitCardVal;
+  }
+  if (cardRefEl && cardRefVal) {
+    const cr = document.getElementById('card-ref-input');
+    if (cr) cr.value = cardRefVal;
+  }
+  updateChange();
+  updateSplitChange();
+  selectPayment(currentPayment);
+  if (holdOpen) document.getElementById('hold-panel')?.classList.remove('hidden');
+  const newScrollEl = document.getElementById('cart-items-scroll');
+  if (newScrollEl) newScrollEl.scrollTop = scrollTop;
+
+  closePriceModal();
+  closeVariantPicker();
+
+  cartPanel.classList.remove('flash');
+  void cartPanel.offsetWidth;   // restart the animation on repeated adds
+  cartPanel.classList.add('flash');
+}
+
+// Scanning (or typing a SKU and hitting Go) no longer adds straight to the
+// cart — it looks the product up and opens the same price-check modal a
+// tapped tile uses, so staff get a chance to confirm the price or apply a
+// discount before it lands in the sale. Kept separate from posAjaxSubmit()
+// because this genuinely doesn't touch the cart panel at all on a hit —
+// only the price modal changes — and needs its own not-found handling via
+// the dedicated #scan-feedback banner instead of a cart-panel swap.
+async function handleScanSubmit(form){
+  const input = document.getElementById('sku-search');
+  const feedback = document.getElementById('scan-feedback');
+
+  let data;
+  try {
+    const res = await fetch(form.action, {
+      method: 'POST',
+      body: new FormData(form),
+      headers: { 'X-Pos-Ajax': '1' },
+    });
+    if (!res.ok) throw new Error('scan lookup failed: ' + res.status);
+    data = await res.json();
+  } catch (err) {
+    // Couldn't complete over fetch — fall back to the original direct-add
+    // behavior rather than leave the scan with no visible effect.
+    form.submit();
+    return;
+  }
+
+  if (feedback) { feedback.textContent = ''; feedback.classList.add('hidden'); }
+
+  if (data.found) {
+    openPriceModal(data.product);
+  } else if (data.error && feedback) {
+    feedback.textContent = data.error;
+    feedback.classList.remove('hidden');
+  }
+  if (input) { input.value = ''; input.focus(); }
+}
+
+// Delegated on document (not per-form) so it keeps working after every
+// innerHTML swap without needing to re-bind anything to the new markup.
+// Bubble phase (the default) matters here: it lets a form's own
+// onsubmit="return confirm(...)" (the held-cart delete) run and possibly
+// cancel the event *before* this ever sees it.
+document.addEventListener('submit', function(e){
+  const form = e.target;
+  if (!(form instanceof HTMLFormElement)) return;
+  if (!form.hasAttribute('data-pos-ajax')) return;
+  if (e.defaultPrevented) return;   // e.g. the delete-hold confirm() was cancelled
+  e.preventDefault();
+  if (form.id === 'scan-form') {
+    handleScanSubmit(form);
+  } else {
+    posAjaxSubmit(form, e.submitter || null);
+  }
+});
+
+// Init
+selectPayment('Cash');
+</script>
+{% endblock %}
