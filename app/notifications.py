@@ -315,7 +315,8 @@ def _receipt_html(shop_name, shop_address, shop_phone, invoice, province_label="
         </tr>
       </table>
       <div style="text-align:center;margin-top:14px;padding:8px 0;border-top:1px solid #c8dece;font-size:12px;font-weight:700;letter-spacing:.5px;color:#1e3a28;font-family:{F}">
-        NO REFUND — EXCHANGE ONLY
+        NO REFUND — EXCHANGE ONLY WITHIN 7 DAYS
+        
       </div>
 
     </td></tr>
